@@ -1,5 +1,6 @@
 import random
 from enum import Enum
+from statistics import mean
 from typing import List, Dict, Tuple, Union
 
 EMERGENCY_TAKEOUT = "Emergency Takeout"
@@ -619,12 +620,185 @@ class ProportionalConsumptionStrategy(MealPlanningStrategy):
         return meal
 
 
+
+class GroceryStore:
+    def __init__(self, best_before_params: dict, spoilage_date_params: dict):
+        """
+        Initialize the GroceryStore with parameters for distributions.
+
+        Args:
+            best_before_params (dict): Parameters for the discrete normal distribution for the best_before by FoodType.
+                                        {FoodType: (mean, std_dev)}
+            spoilage_date_params (dict): Parameters for the discrete normal distribution for the spoilage_date by FoodType.
+                                         {FoodType: (mean, std_dev)}
+        """
+        self.best_before_params = best_before_params
+        self.spoilage_date_params = spoilage_date_params
+        self.food_names = ["Test", "Other", "SomethingElse", "UHT"]  # Sample food names.
+
+    def _draw_from_distribution(self, mean: float, std_dev: float) -> int:
+        """Draw a discrete random value from a normal distribution."""
+        return int(random.gauss(mean, std_dev))
+
+    def get_order(self, food_type: FoodType, total_quantity: float) -> List[FoodItem]:
+        """
+        Get an order for a specific quantity and type of food.
+
+        Args:
+            food_type (FoodType): The type of food to be ordered.
+            total_quantity (float): Total weight of food to be ordered.
+
+        Returns:
+            List[FoodItem]: A list of FoodItems making up the order.
+        """
+        order = []
+        remaining_quantity = total_quantity
+        best_before_mean, best_before_std_dev = self.best_before_params[food_type]
+        spoilage_date_mean, spoilage_date_std_dev = self.spoilage_date_params[food_type]
+
+        while remaining_quantity > 0:
+            food_name = food_type.name + " - item"
+            best_before = self._draw_from_distribution(best_before_mean, best_before_std_dev)
+            spoilage_date = self._draw_from_distribution(spoilage_date_mean, spoilage_date_std_dev)
+            # Making sure the spoilage date is always greater than the best before date.
+            spoilage_date = max(best_before + 1, spoilage_date)
+            # To simulate variable quantities of different items, we'll randomly determine the quantity for this item.
+            quantity = min(random.uniform(0.1 * total_quantity, 0.5 * total_quantity), remaining_quantity)
+            quantity = int(quantity)
+            item = FoodItem(food_name, food_type, best_before, spoilage_date, quantity)
+            order.append(item)
+
+            remaining_quantity -= quantity
+
+        return order
+
+
+class OrderPolicy(ABC):
+    """
+    Abstract base class for defining how a household determines the quantity to order.
+    """
+
+    def __init__(self, frequency: int):
+        """
+        Initialize the order policy with a fixed frequency for shopping.
+
+        Args:
+            frequency: Number of days between grocery shopping trips.
+        """
+        self.frequency = frequency
+        self.days_until_next_order = frequency  # Setting the initial value to the frequency
+
+    @abstractmethod
+    def determine_order_quantity(self, household: 'Household') -> Tuple[float, float]:
+        """
+        Determine the quantity of perishables and non-perishables the household should order.
+
+        Args:
+            household: The household making the order.
+
+        Returns:
+            Tuple[float, float]: The quantity of perishables and non-perishables to order, respectively.
+        """
+        pass
+
+    def decrement_days_until_next_order(self):
+        """
+        Decrease the number of days until the next order by one.
+        """
+        self.days_until_next_order -= 1
+
+    def reset_days_until_next_order(self):
+        """
+        Reset the days until the next order back to the original frequency.
+        """
+        self.days_until_next_order = self.frequency
+
+
+class FixedConsumptionPolicy(OrderPolicy):
+    """
+    A simple order policy where the household orders based on fixed daily consumption rates and a fixed duration until the next order.
+    """
+
+    def __init__(self, daily_consumption_perishable: float, daily_consumption_non_perishable: float,
+                 frequency: int, safety_stock_perishable: float, safety_stock_non_perishable: float):
+        """
+        Initialize the fixed consumption policy.
+
+        Args:
+            daily_consumption_perishable: Expected daily consumption for perishables.
+            daily_consumption_non_perishable: Expected daily consumption for non-perishables.
+            frequency: Days between shopping trips.
+            safety_stock_perishable: Additional safety stock for perishables to order.
+            safety_stock_non_perishable: Additional safety stock for non-perishables to order.
+        """
+        super().__init__(frequency)
+        self.daily_consumption_perishable = daily_consumption_perishable
+        self.daily_consumption_non_perishable = daily_consumption_non_perishable
+        self.safety_stock_perishable = safety_stock_perishable
+        self.safety_stock_non_perishable = safety_stock_non_perishable
+
+    def determine_order_quantity(self, household: 'Household') -> Tuple[float, float]:
+        """
+        Determine order quantity based on fixed daily consumption rates, days until next order, and safety stock.
+
+        Args:
+            household: The household making the order.
+
+        Returns:
+            Tuple[float, float]: The quantity of perishables and non-perishables to order, respectively.
+        """
+        order_quantity_perishable = (self.daily_consumption_perishable * self.frequency) + self.safety_stock_perishable
+        order_quantity_non_perishable = (self.daily_consumption_non_perishable * self.frequency) + self.safety_stock_non_perishable
+
+        return order_quantity_perishable, order_quantity_non_perishable
+
+
+
+class HistoricalConsumptionPolicy(FixedConsumptionPolicy):
+    """
+    Adapts the FixedConsumptionPolicy based on a household's recent consumption history.
+    """
+
+    def __init__(self, base_policy: FixedConsumptionPolicy):
+        """
+        Initialize the historical consumption policy.
+
+        Args:
+            base_policy: The fixed consumption policy that this decorator adapts based on historical data.
+        """
+        self.base_policy = base_policy
+
+    def determine_order_quantity(self, household: 'Household') -> Tuple[float, float]:
+        """
+        Determine order quantity based on household's recent consumption history.
+
+        Args:
+            household: The household making the order.
+
+        Returns:
+            Tuple[float, float]: The quantity of perishables and non-perishables to order, respectively.
+        """
+        # If there's less than 7 days of history, just use the base policy
+        if len(household.history) < 7:
+            return self.base_policy.determine_order_quantity(household)
+        last_week_consumption_perishable = mean([day["daily_consumption"][FoodType.PERISHABLE] for day in household.history[-7:]])
+        last_week_consumption_non_perishable = mean([day["daily_consumption"][FoodType.NON_PERISHABLE] for day in household.history[-7:]])
+
+        self.base_policy.daily_consumption_perishable = last_week_consumption_perishable
+        self.base_policy.daily_consumption_non_perishable = last_week_consumption_non_perishable
+
+        return self.base_policy.determine_order_quantity(household)
+
+
 class Household:
     def __init__(self, adults: int, children: int, income_percentile: float,
                  meal_generator: MealGenerator = StandardMealGenerator(0.5),
                  meal_planning_strategy: MealPlanningStrategy = FreshFirstStrategy(),
                  consumption_strategy: ConsumptionStrategy = BasicConsumptionStrategy(),
-                 pantry_strategy: PantryStrategy = LaxStrategy()):
+                 pantry_strategy: PantryStrategy = LaxStrategy(),
+                 order_policy: OrderPolicy = FixedConsumptionPolicy(),
+                 grocery_store: GroceryStore = None
+                 ):
         """
         Represents a household, with its characteristics and pantry.
 
@@ -652,6 +826,10 @@ class Household:
         self.meal_generator = meal_generator
         self.consumption_strategy = consumption_strategy
         self.pantry_strategy = pantry_strategy
+
+        # Add an order policy and a link to a grocery store.
+        self.order_policy = order_policy
+        self.grocery_store = grocery_store
 
         # Dictionary to keep track of total food consumption by type.
         self.daily_consumption = {
@@ -714,12 +892,41 @@ class Household:
                 if food_item.name == EMERGENCY_TAKEOUT:
                     self.daily_emergency_takeouts += amount
 
+        ### expire stuff.....
         self.pantry.step(self.pantry_strategy)
+        ## now do ordering, if needed
+        # Decrement days until the next order.
+        self.order_policy.decrement_days()
+
+        total_perishable_bought = 0
+        total_nonperishable_bought=0
+        # Check if it's time to place an order.
+        if self.order_policy.days_until_next_order == 0:
+            # Place an order using the order policy's determine_order_quantity() method.
+            perishable_quantity, non_perishable_quantity = self.order_policy.determine_order_quantity(self)
+
+            # Order from the grocery store.
+            perishable_order = self.grocery_store.get_order(FoodType.PERISHABLE, perishable_quantity)
+            non_perishable_order = self.grocery_store.get_order(FoodType.NON_PERISHABLE, non_perishable_quantity)
+
+            # Add ordered items to the pantry.
+            for item in perishable_order:
+                total_perishable_bought += item.quantity
+                self.pantry.add_item(item)
+            for item in non_perishable_order:
+                self.pantry.add_item(item)
+                total_nonperishable_bought += item.quantity
+
+            # Reset the days until next order.
+            self.order_policy.reset_days()
+
 
         daily_record = {
             "meals_eaten_today": self.meals_eaten_today,
             "daily_consumption": self.daily_consumption,
-            "emergency_takeouts": self.daily_emergency_takeouts
+            "emergency_takeouts": self.daily_emergency_takeouts,
+            "total_perishable_bought": total_perishable_bought,
+            "total_nonperishable_bought": total_nonperishable_bought
         }
         self.history.append(daily_record)
 
