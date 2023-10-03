@@ -796,7 +796,7 @@ class Household:
                  meal_planning_strategy: MealPlanningStrategy = FreshFirstStrategy(),
                  consumption_strategy: ConsumptionStrategy = BasicConsumptionStrategy(),
                  pantry_strategy: PantryStrategy = LaxStrategy(),
-                 order_policy: OrderPolicy = FixedConsumptionPolicy(),
+                 order_policy: OrderPolicy = FixedConsumptionPolicy(20000,20000,7,0,0),
                  grocery_store: GroceryStore = None
                  ):
         """
@@ -896,7 +896,7 @@ class Household:
         self.pantry.step(self.pantry_strategy)
         ## now do ordering, if needed
         # Decrement days until the next order.
-        self.order_policy.decrement_days()
+        self.order_policy.decrement_days_until_next_order()
 
         total_perishable_bought = 0
         total_nonperishable_bought=0
@@ -918,7 +918,7 @@ class Household:
                 total_nonperishable_bought += item.quantity
 
             # Reset the days until next order.
-            self.order_policy.reset_days()
+            self.order_policy.reset_days_until_next_order()
 
 
         daily_record = {

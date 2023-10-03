@@ -1,6 +1,7 @@
 import unittest
 
-from simulation import StandardMealGenerator, ProportionalConsumptionStrategy, FoodType, FoodItem, Household
+from simulation import StandardMealGenerator, ProportionalConsumptionStrategy, FoodType, FoodItem, Household, \
+    FixedConsumptionPolicy
 
 
 class TestHousehold(unittest.TestCase):
@@ -9,7 +10,8 @@ class TestHousehold(unittest.TestCase):
         # Set up a household with 2 adults, no children, and certain strategies
         self.household = Household(2, 0, 0.5,
                                    meal_generator=StandardMealGenerator(1.0),
-                                   meal_planning_strategy=ProportionalConsumptionStrategy(0.5))
+                                   meal_planning_strategy=ProportionalConsumptionStrategy(0.5),
+                                   order_policy = FixedConsumptionPolicy(20000,20000,700,0,0))
 
         # Add 100kg of perishable and non-perishable items to the pantry
         self.cookies = FoodItem("Cookies", FoodType.NON_PERISHABLE, best_before=15, spoilage_date=20,
