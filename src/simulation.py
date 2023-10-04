@@ -652,7 +652,7 @@ class GroceryStore:
             List[FoodItem]: A list of FoodItems making up the order.
         """
         order = []
-        remaining_quantity = total_quantity
+        remaining_quantity = int(total_quantity)
         best_before_mean, best_before_std_dev = self.best_before_params[food_type]
         spoilage_date_mean, spoilage_date_std_dev = self.spoilage_date_params[food_type]
 
@@ -719,8 +719,8 @@ class FixedConsumptionPolicy(OrderPolicy):
     A simple order policy where the household orders based on fixed daily consumption rates and a fixed duration until the next order.
     """
 
-    def __init__(self, daily_consumption_perishable: float, daily_consumption_non_perishable: float,
-                 frequency: int, safety_stock_perishable: float, safety_stock_non_perishable: float):
+    def __init__(self, daily_consumption_perishable: int, daily_consumption_non_perishable: int,
+                 frequency: int, safety_stock_perishable: int, safety_stock_non_perishable: int):
         """
         Initialize the fixed consumption policy.
 
@@ -789,6 +789,75 @@ class HistoricalConsumptionPolicy(FixedConsumptionPolicy):
 
         return self.base_policy.determine_order_quantity(household)
 
+
+
+class AdaptiveOrderPolicy(FixedConsumptionPolicy):
+    """
+    Adapts the FixedConsumptionPolicy based on a household's recent consumption history.
+    Uses weekly averages and standard deviations to determine the order quantity.
+    """
+
+    def __init__(self, base_policy: FixedConsumptionPolicy, delta: float = 1.96):
+        """
+        Initialize the adaptive order policy.
+
+        Args:
+            base_policy: The fixed consumption policy that this adaptive policy extends.
+            delta: Represents the cycle service level targeted.
+        """
+        super().__init__(
+            daily_consumption_perishable=base_policy.daily_consumption_perishable,
+            daily_consumption_non_perishable=base_policy.daily_consumption_non_perishable,
+            frequency=base_policy.frequency,
+            safety_stock_perishable=base_policy.safety_stock_perishable,
+            safety_stock_non_perishable=base_policy.safety_stock_non_perishable
+        )
+        self.delta = delta
+
+    def _calculate_std_dev(self, data: list) -> float:
+        """
+        Compute the standard deviation for a given list of data.
+        """
+        n = len(data)
+        if n <= 1:
+            return 0
+
+        mean_val = sum(data) / n
+        variance = sum((x - mean_val) ** 2 for x in data) / (n - 1)
+        std_dev = variance ** 0.5
+        return std_dev
+
+    def determine_order_quantity(self, household: 'Household') -> Tuple[float, float]:
+        """
+        Determine order quantity based on household's recent consumption history.
+
+        Args:
+            household: The household making the order.
+
+        Returns:
+            Tuple[float, float]: The quantity of perishables and non-perishables to order, respectively.
+        """
+        # If there's less than 7 days of history, just use the base policy
+        if len(household.history) < 7:
+            return super().determine_order_quantity(household)
+
+        # Calculate weekly averages
+        last_week_consumption_perishable = sum([day["daily_consumption"][FoodType.PERISHABLE] for day in household.history[-7:]]) / 7
+        last_week_consumption_non_perishable = sum([day["daily_consumption"][FoodType.NON_PERISHABLE] for day in household.history[-7:]]) / 7
+
+        # Calculate weekly standard deviations
+        std_dev_perishable = self._calculate_std_dev([day["daily_consumption"][FoodType.PERISHABLE] for day in household.history[-7:]])
+        std_dev_non_perishable = self._calculate_std_dev([day["daily_consumption"][FoodType.NON_PERISHABLE] for day in household.history[-7:]])
+
+        # Update daily consumption rates
+        self.daily_consumption_perishable = last_week_consumption_perishable
+        self.daily_consumption_non_perishable = last_week_consumption_non_perishable
+
+        # Update safety stocks
+        self.safety_stock_perishable = self.delta * std_dev_perishable
+        self.safety_stock_non_perishable = self.delta * std_dev_non_perishable
+
+        return super().determine_order_quantity(household)
 
 class Household:
     def __init__(self, adults: int, children: int, income_percentile: float,
@@ -926,7 +995,12 @@ class Household:
             "daily_consumption": self.daily_consumption,
             "emergency_takeouts": self.daily_emergency_takeouts,
             "total_perishable_bought": total_perishable_bought,
-            "total_nonperishable_bought": total_nonperishable_bought
+            "total_nonperishable_bought": total_nonperishable_bought,
+            "expired_discards": sum(value for value in self.pantry.waste_log['expired_discards'][self.pantry.current_day].values()),
+            "strategy_discards": sum(value for value in self.pantry.waste_log['strategy_discards'][self.pantry.current_day].values()),
+            "total_food_stored": self.pantry.get_total(),
+            "perishables_stored": self.pantry.get_total_by_type(FoodType.PERISHABLE),
+            "non_perishables_stored": self.pantry.get_total_by_type(FoodType.NON_PERISHABLE),
         }
         self.history.append(daily_record)
 
