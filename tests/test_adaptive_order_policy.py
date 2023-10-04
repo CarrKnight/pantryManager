@@ -27,12 +27,13 @@ class TestAdaptiveOrderPolicy(unittest.TestCase):
         )
 
     def test_adaptive_order_consistent_consumption(self):
-        self.household.pantry.add_item(FoodItem("starter",FoodType.NON_PERISHABLE,100,100,10000))
-        self.household.pantry.add_item(FoodItem("starter",FoodType.PERISHABLE,100,100,10000))
+        self.household.pantry.add_item(FoodItem("starter",FoodType.NON_PERISHABLE,7,7,10000))
+        self.household.pantry.add_item(FoodItem("starter",FoodType.PERISHABLE,7,7,10000))
         # Simulate consistent consumption for 7 days
         self.household.start_of_week()
         for _ in range(7):
             self.household.daily_step()
+        self.household.pantry.reset()
 
         perishable_order, non_perishable_order = self.household.order_policy.determine_order_quantity(self.household)
 

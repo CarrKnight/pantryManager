@@ -222,6 +222,12 @@ class Pantry:
     def get_total(self):
         return sum(item.quantity for item_list in self.items_by_type.values() for item in item_list)
 
+    def reset(self):
+        self.items_by_type = {
+            FoodType.LEFTOVER: [],
+            FoodType.PERISHABLE: [],
+            FoodType.NON_PERISHABLE: []
+        }
 
 class ConsumptionStrategy(ABC):
     """
@@ -750,7 +756,11 @@ class FixedConsumptionPolicy(OrderPolicy):
         order_quantity_perishable = (self.daily_consumption_perishable * self.frequency) + self.safety_stock_perishable
         order_quantity_non_perishable = (self.daily_consumption_non_perishable * self.frequency) + self.safety_stock_non_perishable
 
-        return order_quantity_perishable, order_quantity_non_perishable
+        # Adjusting for items already in pantry
+        order_quantity_perishable -= household.pantry.get_total_by_type(FoodType.PERISHABLE)
+        order_quantity_non_perishable -= household.pantry.get_total_by_type(FoodType.NON_PERISHABLE)
+
+        return max(0,order_quantity_perishable), max(0,order_quantity_non_perishable)
 
 
 

@@ -44,7 +44,7 @@ for _ in range(500):
         ## % of each meal being consumed at home...
         meal_generator=StandardMealGenerator(0.5),
         ## % between perishables and non-perishables
-        meal_planning_strategy=FreshFirstStrategy(),
+        meal_planning_strategy=ProportionalConsumptionStrategy(0.5),
         ## first in, first out, should be careful food about to expire first
         consumption_strategy=BasicConsumptionStrategy(),
         ## anything that pass "best-before"
