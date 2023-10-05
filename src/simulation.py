@@ -415,7 +415,7 @@ class Meal:
 
             if remaining_amount > 0:
                 foods_to_eat.append(
-                    (FoodItem(EMERGENCY_TAKEOUT, food_type, 0, 0, remaining_amount), remaining_amount))
+                    (FoodItem(EMERGENCY_TAKEOUT, FoodType.PERISHABLE, 0, 0, remaining_amount), remaining_amount))
 
         return foods_to_eat
 
@@ -600,21 +600,25 @@ class ProportionalConsumptionStrategy(MealPlanningStrategy):
 
         total_grams = planned_meal.total_grams
 
-        leftovers = pantry.get_total_by_type(FoodType.LEFTOVER)
-        perishables = pantry.get_total_by_type(FoodType.PERISHABLE)
+        leftovers_available = pantry.get_total_by_type(FoodType.LEFTOVER)
+        perishables_available = pantry.get_total_by_type(FoodType.PERISHABLE)
 
-        leftovers_to_consume = min(leftovers, total_grams)
+        leftovers_to_consume = min(leftovers_available, total_grams)
         total_grams -= leftovers_to_consume
 
         # Calculate proportional consumption after consuming leftovers
-        perishables_to_consume = min(perishables, total_grams * self.proportion_perishables)
+        perishables_to_consume = total_grams * self.proportion_perishables
         non_perishables_to_consume = total_grams - perishables_to_consume
 
         # If there aren't enough perishables, fill up with non-perishables
-        if perishables_to_consume < total_grams * self.proportion_perishables:
-            non_perishables_to_consume += (
-                    total_grams * self.proportion_perishables - perishables_to_consume)
-            perishables_to_consume = perishables
+        if perishables_available <= perishables_to_consume:
+
+            ### 2000 left, 5000 to eat
+            ### that means I can only eat 2000 perishables, and the rest is to be eaten
+            to_transfer = perishables_to_consume - perishables_available
+            perishables_to_consume = perishables_available
+
+            non_perishables_to_consume += to_transfer
 
         consumption_patterns = {
             FoodType.LEFTOVER: leftovers_to_consume,
@@ -661,8 +665,8 @@ class GroceryStore:
         remaining_quantity = int(total_quantity)
         best_before_mean, best_before_std_dev = self.best_before_params[food_type]
         spoilage_date_mean, spoilage_date_std_dev = self.spoilage_date_params[food_type]
-
-        while remaining_quantity > 0:
+        failures = 0
+        while remaining_quantity > 0 and failures<100:
             food_name = food_type.name + " - item"
             best_before = self._draw_from_distribution(best_before_mean, best_before_std_dev)
             spoilage_date = self._draw_from_distribution(spoilage_date_mean, spoilage_date_std_dev)
@@ -671,10 +675,13 @@ class GroceryStore:
             # To simulate variable quantities of different items, we'll randomly determine the quantity for this item.
             quantity = min(random.uniform(0.1 * total_quantity, 0.5 * total_quantity), remaining_quantity)
             quantity = int(quantity)
-            item = FoodItem(food_name, food_type, best_before, spoilage_date, quantity)
-            order.append(item)
+            if quantity == 0: ## when numbers are really small, you can start missing some orders. Keep them at 0 then....
+                failures+=1
+            else:
+                item = FoodItem(food_name, food_type, best_before, spoilage_date, quantity)
+                order.append(item)
 
-            remaining_quantity -= quantity
+                remaining_quantity -= quantity
 
         return order
 

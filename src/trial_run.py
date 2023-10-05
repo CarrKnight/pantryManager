@@ -6,10 +6,12 @@
 # (2) What if people get more "relaxed" about safety stock
 # (3) what if grocery store frequency is faster?
 # (4) what if people aren't very strict about consuming older food at home first?
-# (5) what if people want more perishables in their lives?
+# (5) what if people want more perishables in their lives? ---> seasonal shock?
 # (6) What if we manage to push perishables to last one more day on average?
 import random
 from simulation import *
+
+random.seed(0)
 
 store = GroceryStore(
     best_before_params={
@@ -29,7 +31,12 @@ CHILD_RANGE = (0, 5)  # Assuming a household can have between 0 to 5 children
 ADULT_DAILY_CONSUMPTION = 1800
 CHILD_DAILY_CONSUMPTION = 1050
 
-for _ in range(500):
+NUMBER_OF_HOUSEHOLDS = 500
+WEEKS_TO_SIMULATE = 20
+
+
+
+for _ in range(NUMBER_OF_HOUSEHOLDS):
     num_adults = random.randint(*ADULT_RANGE)
     num_children = random.randint(*CHILD_RANGE)
 
@@ -42,13 +49,13 @@ for _ in range(500):
         children=num_children,
         income_percentile=0.5,
         ## % of each meal being consumed at home...
-        meal_generator=StandardMealGenerator(0.5),
+        meal_generator=StandardMealGenerator(1),
         ## % between perishables and non-perishables
-        meal_planning_strategy=ProportionalConsumptionStrategy(0.5),
+        meal_planning_strategy=FreshFirstStrategy(),
         ## first in, first out, should be careful food about to expire first
         consumption_strategy=BasicConsumptionStrategy(),
         ## anything that pass "best-before"
-        pantry_strategy=StrictStrategy(),
+        pantry_strategy=LaxStrategy(),
         ## follows a standard EOQ order policy (mean consumption + 1.96*sd)
         ## adjusts by looking at previous week results...
         order_policy=AdaptiveOrderPolicy(
@@ -65,9 +72,9 @@ for _ in range(500):
     )
     ## first week pantry is full, but everything expires in a week
     household.pantry.add_item(
-        FoodItem("temp", FoodType.PERISHABLE, 7, 7, total_perishable_consumption * 10))
+        FoodItem("temp", FoodType.PERISHABLE, 6, 6, total_perishable_consumption * 10))
     household.pantry.add_item(
-        FoodItem("temp", FoodType.NON_PERISHABLE, 7, 7, total_perishable_consumption * 10)
+        FoodItem("temp", FoodType.NON_PERISHABLE, 6, 6, total_perishable_consumption * 10)
     )
     households.append(
         household
@@ -75,14 +82,15 @@ for _ in range(500):
 
     )
 
-
-for week in range(100):
+for week in range(WEEKS_TO_SIMULATE):
     print(f"week: {week}")
     for household in households:
         household.start_of_week()
     for day in range(7):
         for household in households:
             household.daily_step()
+
+
 
 #print(households[0].history)
 
