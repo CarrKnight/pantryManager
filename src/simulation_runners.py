@@ -4,10 +4,13 @@ import pandas as pd
 
 def run_simulation(where_to_save_results,
                    frequency_grocery_store=7,
-                   proportion_meals_at_home=1.0,
-                   meal_planning_strategy=FreshFirstStrategy(), consumption_strategy=BasicConsumptionStrategy(),
+                   meal_planning_strategy=FreshFirstStrategy(),
+                   consumption_strategy=BasicConsumptionStrategy(),
                    pantry_strategy=StrictStrategy(), critical_value_order_policy=1.96, weeks_to_simulate=30,
-                   grocery_store_improvements = 0
+                   grocery_store_improvements = 0,
+                   meal_generator = StandardMealGenerator(1.0),
+                   leftover_generator = FixedPercentageLeftoverGenerator(0),
+                   plate_waste_generator = FixedPercentageWasteCalculator(0)
                    ):
     store = GroceryStore(
         best_before_params={
@@ -39,7 +42,7 @@ def run_simulation(where_to_save_results,
             children=num_children,
             income_percentile=0.5, ## doesn't do anything right now....
             ## % of each meal being consumed at home...
-            meal_generator=StandardMealGenerator(proportion_meals_at_home),
+            meal_generator=meal_generator,
             ## % between perishables and non-perishables
             meal_planning_strategy=meal_planning_strategy,
             ## first in, first out, should be careful food about to expire first
@@ -58,13 +61,15 @@ def run_simulation(where_to_save_results,
                 ),
                 critical_value_order_policy
             ),
-            grocery_store=store
+            grocery_store=store,
+            leftover_generator = leftover_generator,
+            plate_waste_generator = plate_waste_generator
         )
         ## first week pantry is full, but everything expires in a week
         household.pantry.add_item(
-            FoodItem("temp", FoodType.PERISHABLE, frequency_grocery_store-1, frequency_grocery_store-1, total_perishable_consumption * 10))
+            FoodItem("temp", FoodType.PERISHABLE, frequency_grocery_store-1, frequency_grocery_store-1, total_perishable_consumption * 2 ))
         household.pantry.add_item(
-            FoodItem("temp", FoodType.NON_PERISHABLE, frequency_grocery_store-1, frequency_grocery_store-1, total_perishable_consumption * 10)
+            FoodItem("temp", FoodType.NON_PERISHABLE, frequency_grocery_store-1, frequency_grocery_store-1, total_perishable_consumption * 2 )
         )
         households.append(
             household
@@ -108,72 +113,77 @@ def run_simulation(where_to_save_results,
 
 
 ##run_simulation('../output/trial_run.csv')
-
+def main():
 ### initial runs (get a good handle on stuff)
-# for _ in range(10):
-    # run_simulation('../output/basic_runs/alwaysEatAtHome_freshFirst' + str(_) +".csv",
-    #                proportion_meals_at_home=1,
-    #                meal_planning_strategy=FreshFirstStrategy())
-    #
-    # run_simulation('../output/basic_runs/alwaysEatAtHome_fiftypercentperishable'+ str(_) +".csv",
-    #                proportion_meals_at_home=1,
-    #                meal_planning_strategy=ProportionalConsumptionStrategy(0.5))
-    #
-    # run_simulation('../output/basic_runs/fiftyPercentMealsAtHome_freshFirst' + str(_) +".csv",
-    #                proportion_meals_at_home=0.5,
-    #                meal_planning_strategy=FreshFirstStrategy())
+    for _ in range(30):
+        run_simulation('../output/basic_runs/alwaysEatAtHome_freshFirst' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(1),
+                       meal_planning_strategy=FreshFirstStrategy())
 
-    # run_simulation('../output/basic_runs/fiftyPercentMealsAtHome_fiftypercentperishable' + str(_) +".csv",
-    #                proportion_meals_at_home=0.5,
-    #                meal_planning_strategy=ProportionalConsumptionStrategy(0.5))
+        run_simulation('../output/basic_runs/alwaysEatAtHome_fiftypercentperishable'+ str(_) +".csv",
+                       meal_generator = StandardMealGenerator(1),
+                       meal_planning_strategy=ProportionalConsumptionStrategy(0.5))
 
+        run_simulation('../output/basic_runs/fiftyPercentMealsAtHome_freshFirst' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.5),
+                       meal_planning_strategy=FreshFirstStrategy())
 
-## now do the real ones, assume that the baseline is always fresh first, 75% of meals at home
-
-for _ in range(30):
-    run_simulation('../output/runs/baseline' + str(_) +".csv",
-                   proportion_meals_at_home=0.75,
-                   meal_planning_strategy=FreshFirstStrategy())
-
-    run_simulation('../output/runs/laxpantry' + str(_) +".csv",
-                   proportion_meals_at_home=0.75,
-                   meal_planning_strategy=FreshFirstStrategy(),
-                   pantry_strategy=LaxStrategy())
+        run_simulation('../output/basic_runs/fiftyPercentMealsAtHome_fiftypercentperishable' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.5),
+                       meal_planning_strategy=ProportionalConsumptionStrategy(0.5))
 
 
-    run_simulation('../output/runs/safer_pantry' + str(_) +".csv",
-                   proportion_meals_at_home=0.75,
-                   meal_planning_strategy=FreshFirstStrategy(),
-                   critical_value_order_policy=2.326)
+    ## now do the real ones, assume that the baseline is always fresh first, 75% of meals at home
 
-    run_simulation('../output/runs/riskier_pantry' + str(_) +".csv",
-                   proportion_meals_at_home=0.75,
-                   meal_planning_strategy=FreshFirstStrategy(),
-                   critical_value_order_policy=1.64)
+    for _ in range(30):
+        run_simulation('../output/runs/baseline' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.75),
+                       meal_planning_strategy=FreshFirstStrategy())
 
-    run_simulation('../output/runs/frequent_grocery' + str(_) +".csv",
-                   proportion_meals_at_home=0.75,
-                   meal_planning_strategy=FreshFirstStrategy(),
-                   frequency_grocery_store=3)
+        run_simulation('../output/runs/laxpantry' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.75),
+                       meal_planning_strategy=FreshFirstStrategy(),
+                       pantry_strategy=LaxStrategy())
 
-    run_simulation('../output/runs/infrequent_grocery' + str(_) +".csv",
-                   proportion_meals_at_home=0.75,
-                   meal_planning_strategy=FreshFirstStrategy(),
-                   frequency_grocery_store=14)
 
-    run_simulation('../output/runs/randomfridge' + str(_) +".csv",
-                   proportion_meals_at_home=0.75,
-                   meal_planning_strategy=FreshFirstStrategy(),
-                   consumption_strategy=RandomConsumptionStrategy()
-                   )
+        run_simulation('../output/runs/safer_pantry' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.75),
+                       meal_planning_strategy=FreshFirstStrategy(),
+                       critical_value_order_policy=2.326)
 
-    run_simulation('../output/runs/bettertechnology' + str(_) +".csv",
-                   proportion_meals_at_home=0.75,
-                   meal_planning_strategy=FreshFirstStrategy(),
-                   grocery_store_improvements=1
-                   )
-    run_simulation('../output/runs/muchbettertechnology' + str(_) +".csv",
-                   proportion_meals_at_home=0.75,
-                   meal_planning_strategy=FreshFirstStrategy(),
-                   grocery_store_improvements=2
-                   )
+        run_simulation('../output/runs/riskier_pantry' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.75),
+                       meal_planning_strategy=FreshFirstStrategy(),
+                       critical_value_order_policy=1.64)
+
+        run_simulation('../output/runs/frequent_grocery' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.75),
+                       meal_planning_strategy=FreshFirstStrategy(),
+                       frequency_grocery_store=3)
+
+        run_simulation('../output/runs/infrequent_grocery' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.75),
+                       meal_planning_strategy=FreshFirstStrategy(),
+                       frequency_grocery_store=14)
+
+        run_simulation('../output/runs/randomfridge' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.75),
+                       meal_planning_strategy=FreshFirstStrategy(),
+                       consumption_strategy=RandomConsumptionStrategy()
+                       )
+
+        run_simulation('../output/runs/bettertechnology' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.75),
+                       meal_planning_strategy=FreshFirstStrategy(),
+                       grocery_store_improvements=1
+                       )
+        run_simulation('../output/runs/muchbettertechnology' + str(_) +".csv",
+                       meal_generator = StandardMealGenerator(0.75),
+                       meal_planning_strategy=FreshFirstStrategy(),
+                       grocery_store_improvements=2
+                       )
+
+
+
+if __name__ == "__main__":
+    main()

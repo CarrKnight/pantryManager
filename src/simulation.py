@@ -229,6 +229,7 @@ class Pantry:
             FoodType.NON_PERISHABLE: []
         }
 
+
 class ConsumptionStrategy(ABC):
     """
     Abstract base class that defines the strategy for food consumption.
@@ -464,6 +465,10 @@ class PlannedMeal:
 
 
 class MealGenerator(ABC):
+    # Some constants to represent standard food consumption per meal for adults and kids.
+    ADULT_CONSUMPTION = {"breakfast": 400, "lunch": 600, "dinner": 600}
+    KID_CONSUMPTION = {"breakfast": 250, "lunch": 400, "dinner": 400}
+
     def __init__(self):
         """
         An abstract meal generator that creates meals for a household over a week.
@@ -482,9 +487,6 @@ class MealGenerator(ABC):
 
 
 class StandardMealGenerator(MealGenerator):
-    # Some constants to represent standard food consumption per meal for adults and kids.
-    ADULT_CONSUMPTION = {"breakfast": 400, "lunch": 600, "dinner": 600}
-    KID_CONSUMPTION = {"breakfast": 250, "lunch": 400, "dinner": 400}
 
     def __init__(self, meals_at_home_ratio: float):
         """
@@ -538,6 +540,52 @@ class StandardMealGenerator(MealGenerator):
         }
 
         return consumption_breakdown
+
+
+class VariableMealGenerator(MealGenerator):
+    """
+    Like standard meal generator (which it delegates to) but it adds noise (normally distributed) and the chance of guests,
+    which here are assumed to be adults...
+    """
+
+    def __init__(self, base_generator: MealGenerator, noise_std: float, guest_probability: float, max_guests: int):
+        """
+        Initialize the variable meal generator.
+
+        Args:
+            base_generator (MealGenerator): The base meal generator.
+            noise_std (float): Standard deviation for the normal distribution noise.
+            guest_probability (float): Probability of guests showing up for a meal.
+            max_guests (int): Maximum number of guests that can show up.
+        """
+        super().__init__()
+        self.base_generator = base_generator
+        self.noise_std = noise_std
+        self.guest_probability = guest_probability
+        self.max_guests = max_guests
+
+    def generate_weekly_meals(self, household: 'Household') -> List[List[PlannedMeal]]:
+        weekly_meals = self.base_generator.generate_weekly_meals(household)
+
+        for day_meals in weekly_meals:
+            for meal in day_meals:
+
+                # Add guest consumption
+                if random.random() < self.guest_probability:
+                    num_guests = random.randint(1, self.max_guests)
+                    # Assuming guests eat the same amount as an adult for simplicity
+                    # they always eat for lunch...
+                    guest_consumption = num_guests * self.ADULT_CONSUMPTION["lunch"]
+                    meal.total_grams += guest_consumption
+
+                # Add normally distributed noise to consumption
+                noise = 1 + random.gauss(0, self.noise_std)
+                meal.total_grams *= noise
+
+                # Ensure consumption doesn't go negative due to noise
+                meal.total_grams = int(max(0, meal.total_grams))
+
+        return weekly_meals
 
 
 class MealPlanningStrategy(ABC):
@@ -612,7 +660,6 @@ class ProportionalConsumptionStrategy(MealPlanningStrategy):
 
         # If there aren't enough perishables, fill up with non-perishables
         if perishables_available <= perishables_to_consume:
-
             ### 2000 left, 5000 to eat
             ### that means I can only eat 2000 perishables, and the rest is to be eaten
             to_transfer = perishables_to_consume - perishables_available
@@ -628,7 +675,6 @@ class ProportionalConsumptionStrategy(MealPlanningStrategy):
 
         meal.set_consumption_patterns(consumption_patterns)
         return meal
-
 
 
 class GroceryStore:
@@ -666,7 +712,7 @@ class GroceryStore:
         best_before_mean, best_before_std_dev = self.best_before_params[food_type]
         spoilage_date_mean, spoilage_date_std_dev = self.spoilage_date_params[food_type]
         failures = 0
-        while remaining_quantity > 0 and failures<100:
+        while remaining_quantity > 0 and failures < 100:
             food_name = food_type.name + " - item"
             best_before = self._draw_from_distribution(best_before_mean, best_before_std_dev)
             spoilage_date = self._draw_from_distribution(spoilage_date_mean, spoilage_date_std_dev)
@@ -675,8 +721,8 @@ class GroceryStore:
             # To simulate variable quantities of different items, we'll randomly determine the quantity for this item.
             quantity = min(random.uniform(0.1 * total_quantity, 0.5 * total_quantity), remaining_quantity)
             quantity = int(quantity)
-            if quantity == 0: ## when numbers are really small, you can start missing some orders. Keep them at 0 then....
-                failures+=1
+            if quantity == 0:  ## when numbers are really small, you can start missing some orders. Keep them at 0 then....
+                failures += 1
             else:
                 item = FoodItem(food_name, food_type, best_before, spoilage_date, quantity)
                 order.append(item)
@@ -761,14 +807,14 @@ class FixedConsumptionPolicy(OrderPolicy):
             Tuple[float, float]: The quantity of perishables and non-perishables to order, respectively.
         """
         order_quantity_perishable = (self.daily_consumption_perishable * self.frequency) + self.safety_stock_perishable
-        order_quantity_non_perishable = (self.daily_consumption_non_perishable * self.frequency) + self.safety_stock_non_perishable
+        order_quantity_non_perishable = (
+                                                    self.daily_consumption_non_perishable * self.frequency) + self.safety_stock_non_perishable
 
         # Adjusting for items already in pantry
         order_quantity_perishable -= household.pantry.get_total_by_type(FoodType.PERISHABLE)
         order_quantity_non_perishable -= household.pantry.get_total_by_type(FoodType.NON_PERISHABLE)
 
-        return max(0,order_quantity_perishable), max(0,order_quantity_non_perishable)
-
+        return max(0, order_quantity_perishable), max(0, order_quantity_non_perishable)
 
 
 class HistoricalConsumptionPolicy(FixedConsumptionPolicy):
@@ -798,14 +844,15 @@ class HistoricalConsumptionPolicy(FixedConsumptionPolicy):
         # If there's less than 7 days of history, just use the base policy
         if len(household.history) < 7:
             return self.base_policy.determine_order_quantity(household)
-        last_week_consumption_perishable = mean([day["daily_consumption"][FoodType.PERISHABLE] for day in household.history[-7:]])
-        last_week_consumption_non_perishable = mean([day["daily_consumption"][FoodType.NON_PERISHABLE] for day in household.history[-7:]])
+        last_week_consumption_perishable = mean(
+            [day["daily_consumption"][FoodType.PERISHABLE] for day in household.history[-7:]])
+        last_week_consumption_non_perishable = mean(
+            [day["daily_consumption"][FoodType.NON_PERISHABLE] for day in household.history[-7:]])
 
         self.base_policy.daily_consumption_perishable = last_week_consumption_perishable
         self.base_policy.daily_consumption_non_perishable = last_week_consumption_non_perishable
 
         return self.base_policy.determine_order_quantity(household)
-
 
 
 class AdaptiveOrderPolicy(FixedConsumptionPolicy):
@@ -859,12 +906,16 @@ class AdaptiveOrderPolicy(FixedConsumptionPolicy):
             return super().determine_order_quantity(household)
 
         # Calculate weekly averages
-        last_week_consumption_perishable = sum([day["daily_consumption"][FoodType.PERISHABLE] for day in household.history[-7:]]) / 7
-        last_week_consumption_non_perishable = sum([day["daily_consumption"][FoodType.NON_PERISHABLE] for day in household.history[-7:]]) / 7
+        last_week_consumption_perishable = sum(
+            [day["daily_consumption"][FoodType.PERISHABLE] for day in household.history[-7:]]) / 7
+        last_week_consumption_non_perishable = sum(
+            [day["daily_consumption"][FoodType.NON_PERISHABLE] for day in household.history[-7:]]) / 7
 
         # Calculate weekly standard deviations
-        std_dev_perishable = self._calculate_std_dev([day["daily_consumption"][FoodType.PERISHABLE] for day in household.history[-7:]])
-        std_dev_non_perishable = self._calculate_std_dev([day["daily_consumption"][FoodType.NON_PERISHABLE] for day in household.history[-7:]])
+        std_dev_perishable = self._calculate_std_dev(
+            [day["daily_consumption"][FoodType.PERISHABLE] for day in household.history[-7:]])
+        std_dev_non_perishable = self._calculate_std_dev(
+            [day["daily_consumption"][FoodType.NON_PERISHABLE] for day in household.history[-7:]])
 
         # Update daily consumption rates
         self.daily_consumption_perishable = last_week_consumption_perishable
@@ -876,14 +927,112 @@ class AdaptiveOrderPolicy(FixedConsumptionPolicy):
 
         return super().determine_order_quantity(household)
 
+
+class PlateWasteCalculator(ABC):
+
+    @abstractmethod
+    def compute_plate_waste(self, consumed_items: List[Tuple[FoodItem, float]]) -> List[Tuple[FoodItem, float]]:
+        """
+        Compute the plate waste for a given meal based on the list of consumed items.
+
+        Args:
+            consumed_items (List[Tuple[FoodItem, float]]): List of tuples with FoodItems and their consumed quantities.
+
+        Returns:
+            List[Tuple[FoodItem, float]]: List of tuples with FoodItems and their wasted quantities.
+        """
+        pass
+
+
+class FixedPercentageWasteCalculator(PlateWasteCalculator):
+
+    def __init__(self, waste_percentage: float):
+        self.waste_percentage = waste_percentage
+
+    def compute_plate_waste(self, consumed_items: List[Tuple[FoodItem, float]]) -> List[Tuple[FoodItem, float]]:
+        wasted_items = []
+        for food_item, amount in consumed_items:
+            wasted_amount = amount * self.waste_percentage
+            wasted_items.append((food_item, wasted_amount))
+        return wasted_items
+
+
+class LeftoversCalculator(ABC):
+
+    @abstractmethod
+    def compute_leftovers(self, consumed_items: List[Tuple[FoodItem, float]],
+                          plate_waste: List[Tuple[FoodItem, float]]) -> Dict[FoodType, float]:
+        """
+        Compute the leftovers for a given meal based on the list of consumed items and plate waste.
+
+        Args:
+            consumed_items (List[Tuple[FoodItem, float]]): List of tuples with FoodItems and their consumed quantities.
+            plate_waste (List[Tuple[FoodItem, float]]): List of tuples with FoodItems and their wasted quantities.
+
+        Returns:
+            Dict[FoodType, float]: Dictionary indicating the amount of leftovers per food type in kg.
+        """
+        pass
+
+
+class PerishableLeftoversGenerator(LeftoversCalculator):
+
+    def __init__(self, leftover_percentage: float):
+        self.leftover_percentage = leftover_percentage
+
+    def compute_leftovers(self, consumed_items: List[Tuple[FoodItem, float]],
+                          plate_waste: List[Tuple[FoodItem, float]]) -> Dict[FoodType, float]:
+        leftovers = {FoodType.LEFTOVER: 0, FoodType.PERISHABLE: 0, FoodType.NON_PERISHABLE: 0}
+        for food_item, amount in consumed_items:
+            if food_item.food_type == FoodType.PERISHABLE:
+                leftovers[FoodType.LEFTOVER] += amount * self.leftover_percentage
+        return leftovers
+
+
+class LeftoversGenerator(ABC):
+
+    @abstractmethod
+    def compute_leftovers(self, consumed_items: List[Tuple[FoodItem, float]],
+                          plate_waste: List[Tuple[FoodItem, float]]) -> float:
+        """
+        Compute the leftovers for a given meal based on the list of consumed items and plate waste.
+
+        Args:
+            consumed_items (List[Tuple[FoodItem, float]]): List of tuples with FoodItems and their consumed quantities.
+            plate_waste (List[Tuple[FoodItem, float]]): List of tuples with FoodItems and their wasted quantities.
+
+        Returns:
+            Dict[FoodType, float]: Dictionary indicating the amount of leftovers per food type in kg.
+        """
+        pass
+
+
+class FixedPercentageLeftoverGenerator(LeftoversGenerator):
+    """
+    Very simple: each meal eaten produces a fixed percentage of leftovers....
+    """
+
+    def __init__(self, leftover_percentage: float):
+        self.leftover_percentage = leftover_percentage
+
+    def compute_leftovers(self, consumed_items: List[Tuple[FoodItem, float]],
+                          plate_waste: List[Tuple[FoodItem, float]]) -> float:
+        leftovers = 0
+        for food_item, amount in consumed_items:
+                leftovers += amount * self.leftover_percentage
+        return leftovers
+
+
 class Household:
     def __init__(self, adults: int, children: int, income_percentile: float,
                  meal_generator: MealGenerator = StandardMealGenerator(0.5),
                  meal_planning_strategy: MealPlanningStrategy = FreshFirstStrategy(),
                  consumption_strategy: ConsumptionStrategy = BasicConsumptionStrategy(),
                  pantry_strategy: PantryStrategy = LaxStrategy(),
-                 order_policy: OrderPolicy = FixedConsumptionPolicy(20000,20000,7,0,0),
-                 grocery_store: GroceryStore = None
+                 order_policy: OrderPolicy = FixedConsumptionPolicy(20000, 20000, 7, 0, 0),
+                 grocery_store: GroceryStore = None,
+                 leftover_generator: LeftoversGenerator = FixedPercentageLeftoverGenerator(0),
+                 plate_waste_generator: PlateWasteCalculator = FixedPercentageWasteCalculator(0)
                  ):
         """
         Represents a household, with its characteristics and pantry.
@@ -912,6 +1061,8 @@ class Household:
         self.meal_generator = meal_generator
         self.consumption_strategy = consumption_strategy
         self.pantry_strategy = pantry_strategy
+        self.leftover_generator = leftover_generator
+        self.plate_waste_generator = plate_waste_generator
 
         # Add an order policy and a link to a grocery store.
         self.order_policy = order_policy
@@ -924,6 +1075,8 @@ class Household:
             FoodType.NON_PERISHABLE: 0
         }
         self.daily_emergency_takeouts = 0
+        self.daily_plate_waste = 0
+        self.daily_leftovers_generated = 0
 
     def get_total_food(self) -> float:
         """Fetch the total weight of all food in the pantry."""
@@ -965,6 +1118,8 @@ class Household:
             FoodType.NON_PERISHABLE: 0
         }
         self.daily_emergency_takeouts = 0
+        self.daily_plate_waste = 0
+        self.daily_leftovers_generated = 0
 
         meals_today = self.weekly_meals.pop(0)
         for planned_meal in meals_today:
@@ -973,6 +1128,18 @@ class Household:
 
             self.meals_eaten_today += 1
 
+            ## some of the consumption will be leftovers and waste....
+            ## plate waste...
+            plate_waste = self.plate_waste_generator.compute_plate_waste(consumption)
+            for wasted in plate_waste:
+                self.daily_plate_waste += wasted[1]
+            ## leftovers....
+            leftovers_here = self.leftover_generator.compute_leftovers(consumption, plate_waste)
+            ## put the leftovers in the fridge
+            if leftovers_here>0:
+                self.pantry.add_item(FoodItem("leftover",FoodType.LEFTOVER,
+                                          2,2,leftovers_here))
+                self.daily_leftovers_generated+=leftovers_here
             for food_item, amount in consumption:
                 self.daily_consumption[food_item.food_type] += amount
                 if food_item.name == EMERGENCY_TAKEOUT:
@@ -985,7 +1152,7 @@ class Household:
         self.order_policy.decrement_days_until_next_order()
 
         total_perishable_bought = 0
-        total_nonperishable_bought=0
+        total_nonperishable_bought = 0
         # Check if it's time to place an order.
         if self.order_policy.days_until_next_order == 0:
             # Place an order using the order policy's determine_order_quantity() method.
@@ -1006,20 +1173,23 @@ class Household:
             # Reset the days until next order.
             self.order_policy.reset_days_until_next_order()
 
-
         daily_record = {
             "meals_eaten_today": self.meals_eaten_today,
             "daily_consumption": self.daily_consumption,
             "emergency_takeouts": self.daily_emergency_takeouts,
             "total_perishable_bought": total_perishable_bought,
             "total_nonperishable_bought": total_nonperishable_bought,
-            "expired_discards": sum(value for value in self.pantry.waste_log['expired_discards'][self.pantry.current_day].values()),
-            "strategy_discards": sum(value for value in self.pantry.waste_log['strategy_discards'][self.pantry.current_day].values()),
+            "expired_discards": sum(
+                value for value in self.pantry.waste_log['expired_discards'][self.pantry.current_day].values()),
+            "strategy_discards": sum(
+                value for value in self.pantry.waste_log['strategy_discards'][self.pantry.current_day].values()),
             "total_food_stored": self.pantry.get_total(),
             "perishables_stored": self.pantry.get_total_by_type(FoodType.PERISHABLE),
             "non_perishables_stored": self.pantry.get_total_by_type(FoodType.NON_PERISHABLE),
+            "leftovers_stored": self.pantry.get_total_by_type(FoodType.LEFTOVER),
+            "daily_plate_waste": self.daily_plate_waste,
+            "daily_leftovers_generated": self.daily_leftovers_generated
         }
         self.history.append(daily_record)
 
         return daily_record
-
